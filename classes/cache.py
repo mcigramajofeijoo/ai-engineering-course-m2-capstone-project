@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from constants import EMBEDDING_DIMENSIONS
 from _embedding_model import _embedding_model
 import numpy as np
+from pydantic import BaseModel
+from clients.openrouter_client import openrouter_client
 import faiss
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -123,6 +125,7 @@ class RagExactCache:
         return bool(self.redis.ping())
 
 
+# Semantic Cache Config
 @dataclass(frozen=True)
 class SemanticCacheConfig:
     index_name: str = "idx:semantic_cache"
@@ -145,6 +148,7 @@ class SemanticCacheConfig:
     ttl_seconds: int = 3600
 
 
+# Semantic Cache
 class RagSemanticCache:
 
     def __init__(self):
@@ -157,7 +161,7 @@ class RagSemanticCache:
     def __create_index(self):
         try:
             self.redis.ft(self.config.index_name).info()
-            return # NOTE: If we don't return, it will fail since we will try to create an index that already exists
+            return  # NOTE: If we don't return, it will fail since we will try to create an index that already exists
         except redis.exceptions.ResponseError:
             pass
 
@@ -268,14 +272,13 @@ class RagSemanticCache:
                 "vector_score",
                 "metadata_filters",
                 "rag_pipeline_version",
-                "tenant_id"
+                "tenant_id",
             )
             .dialect(2)
         )
 
         results = self.redis.ft(self.config.index_name).search(
-            query,
-            query_params={"query_vector": query_vector}
+            query, query_params={"query_vector": query_vector}
         )
 
         if not results.docs:
@@ -303,6 +306,12 @@ class RagSemanticCache:
         self.redis.delete(key)
 
 
+class SemanticCacheQueryMatch(BaseModel):
+    match: bool
+    reason: str
+
+
+# Wrapper
 class RagCache:
     """
     Orchestrates exact and semantic caching.
@@ -323,6 +332,135 @@ class RagCache:
         self.exact_cache = RagExactCache()
         self.semantic_cache = RagSemanticCache()
 
+    def __judge_semantic_candidate(
+        self, query: str, cached_query: str
+    ) -> SemanticCacheQueryMatch:
+
+        # TODO: Improve the System Prompt
+        SYSTEM_PROMPT = f"""
+        ROLE
+
+        You are a semantic cache query equivalence judge.
+
+        Your purpose is to determine whether two user queries express the same request and can therefore safely reuse the same cached response.
+
+        CONTEXT
+
+        You will receive:
+
+        - QUERY_A: the current user query.
+        - QUERY_B: a query retrieved from the semantic cache because it is semantically similar to QUERY_A.
+
+        The queries may use different wording, grammar, structure, verbosity, or paraphrasing.
+
+        Evaluate ONLY the information explicitly expressed in the queries.
+
+        Do NOT infer:
+        - events that are not explicitly stated;
+        - previous interactions or actions;
+        - hidden context;
+        - unstated user intentions;
+        - unstated temporal information;
+        - assumptions about what happened before the query.
+
+        If two queries can reasonably be interpreted as expressing the same request based on their explicit content, they are a match.
+
+        TASK
+
+        Return match=true when the two queries express the same request, even when they use different wording or paraphrasing.
+
+        Return match=false when there is an explicit semantic difference, such as:
+
+        - one query asks for additional information;
+        - one query asks for a different action;
+        - one query refers to a different entity;
+        - one query introduces a different constraint;
+        - one query has a different explicit scope;
+        - one query explicitly requires a different answer.
+
+        When deciding, prefer the most direct interpretation supported by the text.
+
+        Do NOT mark queries as different merely because one wording could imply additional context that is not explicitly stated.
+
+
+        EXAMPLES
+
+        Example 1 — Paraphrasing
+
+        Query A:
+        What is the capital of Argentina?
+
+        Query B:
+        Which city is Argentina's capital?
+
+        Result:
+        match = true
+
+
+        Example 2 — Additional information
+
+        Query A:
+        What is the capital of Argentina?
+
+        Query B:
+        What is the capital of Argentina and what time is it there?
+
+        Result:
+        match = false
+
+        Reason:
+        Query B additionally asks for the current time.
+
+
+        Example 3 — Different constraint
+
+        Query A:
+        How can I cancel my subscription?
+
+        Query B:
+        How can I cancel my subscription and get a refund?
+
+        Result:
+        match = false
+
+        Reason:
+        Query B additionally asks about obtaining a refund.
+
+        OUTPUT
+
+        Return a valid JSON object matching the provided response schema.
+
+        - match must be true when both queries express the same request.
+        - match must be false when they express different requests.
+        - reason must briefly explain the semantic difference when match is false.
+        - When match is true, reason should briefly explain why the queries are equivalent.
+        """
+
+        response = openrouter_client.chat.completions.create(
+            model="google/gemma-4-26b-a4b-it:free",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (f"Query A:\n{query}\n\n" f"Query B:\n{cached_query}"),
+                },
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "semantic_cache_query_match",
+                    "strict": True,
+                    "schema": SemanticCacheQueryMatch.model_json_schema(),
+                },
+            },
+            temperature=0,
+            max_tokens=100,
+        )
+
+        return SemanticCacheQueryMatch.model_validate_json(
+            response.choices[0].message.content
+        )
+
     def get(self, query: str, context: CacheContext) -> None:
 
         exact_response = self.exact_cache.get(query=query, context=context)
@@ -337,19 +475,21 @@ class RagCache:
             print("SEMANTIC CACHE HIT", semantic_candidate)
             response = semantic_candidate["response"]
 
-            # Backfill to exact cache
-            self.exact_cache.set(
+            judge = self.__judge_semantic_candidate(
                 query=query,
-                response=response,
-                context=context,
+                cached_query=semantic_candidate["query"],
             )
 
-            # Verify is not a false positive
-            false_positive = False
+            print("JUDGE", judge)
 
-            # TODO: LLM Call
+            if judge.match:
+                # Backfill to exact cache
+                self.exact_cache.set(
+                    query=query,
+                    response=response,
+                    context=context,
+                )
 
-            if not false_positive:
                 return response
 
         # Both Cache Layers Missed

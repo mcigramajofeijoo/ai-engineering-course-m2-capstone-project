@@ -60,7 +60,7 @@ def inference(
 
 
 if __name__ == "__main__":
-    query = "A client won me a dispute, please recheck it"
+    query = "A client won me a dispute, could you double check it?"
     filters = {"category": "Disputes"}
 
     result = inference(query, filters)
