@@ -255,10 +255,10 @@ class SemanticDedupPostprocessor(BaseNodePostprocessor):
         # We already computed the embeddings during retrieval/indexing,
         # so we don't need SemHash to embed the text again.
         semhash = SemHash.from_embeddings(
-            embeddings=embeddings, 
-            records=records, 
+            embeddings=embeddings,
+            records=records,
             columns=["node_id"],
-            model=_embedding_model
+            model=_embedding_model,
         )
 
         results = semhash.self_deduplicate(threshold=self.threshold)

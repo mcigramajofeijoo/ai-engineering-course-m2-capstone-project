@@ -18,7 +18,10 @@ from llama_index.llms.openrouter import OpenRouter
 
 from _embedding_model import _embedding_model
 from _reranker import _reranker
-from classes.postprocessors import MetadataFilterPostprocessor, RagPipelineDeduplicationPostprocessor
+from classes.postprocessors import (
+    MetadataFilterPostprocessor,
+    RagPipelineDeduplicationPostprocessor,
+)
 from utils import get_storage_context_and_nodes
 
 # ============================================================
@@ -31,9 +34,9 @@ RRF_RANK_C = 60
 
 # TODO: Apply QUERY EXPANSION ✅
 # TODO: Apply DEDUPLICATION ✅
-# TODO: Apply CACHING
-# TODO: MICRO-BENCHMARKS: MEDIR Y ENTENDER LA DISTRIBUCIÓN DE LATENCIA (p50, p95)
+# TODO: Apply CACHING ✅
 # TODO: Apply INFERENCE BATCHES – continous batching (vLLM)
+# TODO: MICRO-BENCHMARKS: MEDIR Y ENTENDER LA DISTRIBUCIÓN DE LATENCIA (p50, p95)
 # TODO: Apply MULTI-HOP
 
 
@@ -221,35 +224,34 @@ if __name__ == "__main__":
     else:
         print("No relevant documents found.")
 
+    # ––– UNUSED –––
+    # def build_metadata_filters(filters: Dict[Text, Text] = None):
+    #     """
+    #     WARNING: This would be used ONLY if the backend supports pre-filtering!
 
-# ––– UNUSED –––
-# def build_metadata_filters(filters: Dict[Text, Text] = None):
-#     """
-#     WARNING: This would be used ONLY if the backend supports pre-filtering!
+    #     Converts our application-level metadata filters into
+    #     LlamaIndex MetadataFilters.
+    #     """
 
-#     Converts our application-level metadata filters into
-#     LlamaIndex MetadataFilters.
-#     """
+    #     if not filters:
+    #         return None
 
-#     if not filters:
-#         return None
+    #     converted_filters = []
 
-#     converted_filters = []
+    #     for k, v in filters.items():
+    #         if k in METADATA_FILTERS_AVAILABLE:
+    #             if v is not None:
+    #                 converted_filters.append(MetadataFilter(key=k, value=v, operator="=="))
 
-#     for k, v in filters.items():
-#         if k in METADATA_FILTERS_AVAILABLE:
-#             if v is not None:
-#                 converted_filters.append(MetadataFilter(key=k, value=v, operator="=="))
+    #     if not converted_filters:
+    #         return None
 
-#     if not converted_filters:
-#         return None
+    #     return MetadataFilters(
+    #         filters=converted_filters,
+    #         condition="and",  # AND means that ALL supplied filters must match.
+    #     )
 
-#     return MetadataFilters(
-#         filters=converted_filters,
-#         condition="and",  # AND means that ALL supplied filters must match.
-#     )
-
-# def build_reranker():
+    # def build_reranker():
     # WARNING: TEMPORARILY DISABLED due to a FAISS/PyTorch compatibility issue on Mac Intel.
     # PyTorch is limited to v2.2.2 in our environment, and SentenceTransformers
     # must initialize before FAISS. Since FAISS is imported by classes.py/utils.py,

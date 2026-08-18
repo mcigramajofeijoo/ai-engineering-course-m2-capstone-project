@@ -7,6 +7,7 @@ import time
 
 # from utils import ingest_with_retry
 
+
 # WARNING: We put it here because if not causes circular import, project structure needs to be improved.
 def ingest_with_retry(faiss_index, embeddings, ids, max_retries: int = 5):
     retries = 0
@@ -25,6 +26,7 @@ def ingest_with_retry(faiss_index, embeddings, ids, max_retries: int = 5):
         raise RuntimeError(
             f"No se pudo ingerir el batch tras {max_retries} reintentos."
         )
+
 
 class RetryFaissVectorStore(FaissVectorStore):
 
@@ -46,7 +48,7 @@ class RetryFaissVectorStore(FaissVectorStore):
         return [node.node_id for node in nodes]
 
     def query(self, query, **kwargs):
-        
+
         # INFO: Debug Logs (Make sure the query embedding is reaching FAISS normalized by the embedding model we provided to the VectorStoreIndex)
         query_embedding = np.asarray(
             query.query_embedding,
@@ -70,31 +72,26 @@ class NormalizedEmbeddingModel(BaseEmbedding):
         embedding = np.asarray(
             embedding,
             dtype=np.float32,
-        )
-        # .reshape(1, -1)  # El reshape es únicamente una representación temporal para satisfacer la API de FAISS.
+        ).reshape(
+            1, -1
+        )  # WARNING: El reshape es únicamente una representación temporal para satisfacer la API de FAISS. Si usamos Numpy para normalizar, no necesitamos este reshape.
 
         norm = np.linalg.norm(embedding)
 
         if norm == 0:
             raise ValueError("Cannot normalize a zero-vector embedding.")
 
-        # INFO: If using FAISS to normalize cause us seg fault, we can normalize using Numpy:
-        # return (embedding / norm).tolist()
-    
         faiss.normalize_L2(embedding)
         return embedding[0].tolist()
 
-
     def _get_query_embedding(self, query):
         # Se utiliza para representar la consulta del usuario.
-        print("Getting query embedding")
         embedding = self.model.get_query_embedding(query)
 
         return self._normalize_embedding(embedding)
 
     def _get_text_embedding(self, text):
         # Se utiliza para representar documentos/textos que van a ser almacenados en el índice.
-        print("Getting text embedding")
         embedding = self.model.get_text_embedding(text)
 
         return self._normalize_embedding(embedding)
